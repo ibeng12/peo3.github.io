@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<title>Veo3 & Veo3-fast</title>
+<style>
+body {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background-color: #f0f2f5;
+    margin: 0;
+    padding: 20px;
+}
+h1 {
+    text-align: center;
+    color: #333;
+    margin-bottom: 20px;
+}
+.container {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+label {
+    display: block;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #555;
+}
+select, input[type="file"], textarea {
+    width: 100%;
+    padding: 12px 15px;
+    font-size: 15px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-sizing: border-box;
+}
+button {
+    margin-top: 20px;
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    background-color: #4CAF50;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+button:hover {
+    background-color: #45a049;
+}
+#loadingSpinner {
+    display: none;
+    margin: 30px auto;
+    width: 50px;
+    height: 50px;
+    border: 6px solid #ccc;
+    border-top: 6px solid #4CAF50;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+#result {
+    margin-top: 25px;
+    padding: 15px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #e0f7fa, #ffffff);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+#result video, #result img {
+    max-width: 100%;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    margin-top: 15px;
+}
+</style>
+</head>
+<body>
+<h1 style="text-align:center; margin-bottom:20px;">Veo3 & Veo3-Fast</h1>
+<div class="container">
+
+    <label for="modulSelect">Pilih AI LAIN NYA DISINI:</label>
+    <select id="modulSelect">
+        <option value="veo3">VEO 3</option>
+        <option value="veo3-fast">VEO 3 Fast</option>
+        <option value="img2prompt">img2prompt (dari gambar)</option>
+        <option value="changeclothes">AI Change Clothes</option>
+        <option value="cai">CAI (Chat AI)</option>
+        <option value="txt2img">txt2img (dari teks)</option>
+    </select>
+
+    <label for="imageUpload">Upload Gambar:</label>
+    <input type="file" id="imageUpload" accept="image/*" onchange="uploadGambar()" />
+
+    <div id="uploadStatus"></div>
+
+    <div id="gambarPreview"></div>
+
+    <label style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+        <input type="checkbox" id="autoPromptMode" />
+        Otomatis Ambil Prompt dari Gambar (img2prompt)
+    </label>
+
+    <label for="promptInput" style="margin-top:15px;">Masukkan Prompt:</label>
+    <textarea id="promptInput" placeholder="Masukkan prompt" rows="4"></textarea>
+
+    <button id="generateBtn" onclick="generateMedia()">START</button>
+
+    <div id="loadingSpinner"></div>
+
+    <div id="result"></div>
+
+</div>
+
+<script>
+let uploadedImageUrl = '';
+
+function uploadGambar() {
+    const fileInput = document.getElementById('imageUpload');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const gambarPreviewDiv = document.getElementById('gambarPreview');
+
+    const file = fileInput.files[0];
+    if (!file) {
+        alert('Silakan pilih file gambar terlebih dahulu.');
+        return;
+    }
+
+    uploadStatus.innerHTML = 'Mengunggah gambar...';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('https://fgsi.koyeb.app/api/upload/uploadS3Aws', {
+        method: 'POST',
+        headers: {
+            'apikey': 'fgsiapi-1afccfd1-6d'
+        },
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(errData => {
+                throw new Error('Gagal upload gambar: ' + (errData.message || response.status));
+            }).catch(() => {
+                throw new Error('Gagal upload gambar: ' + response.status);
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data && data.status === true && data.data && data.data.url) {
+            uploadedImageUrl = data.data.url;
+            gambarPreviewDiv.innerHTML = '';
+            const imgPreview = document.createElement('img');
+            imgPreview.src = uploadedImageUrl;
+            imgPreview.alt = 'Gambar Upload';
+            imgPreview.style.maxWidth = '100px';
+            gambarPreviewDiv.appendChild(imgPreview);
+            uploadStatus.innerHTML = 'Gambar berhasil diupload.';
+            if (document.getElementById('autoPromptMode').checked && getSelectedModule() === 'img2prompt') {
+                fetchPromptFromImage();
+            }
+        } else {
+            throw new Error('Respon tidak valid dari API upload.');
+        }
+    })
+    .catch(error => {
+        uploadStatus.innerHTML = 'Error: ' + error.message;
+        console.error(error);
+    });
+}
+
+function getSelectedModule() {
+    return document.getElementById('modulSelect').value;
+}
+
+function fetchPromptFromImage() {
+    if (!uploadedImageUrl) {
+        alert('Silakan upload gambar terlebih dahulu.');
+        return Promise.reject(new Error('Gambar belum diupload.'));
+    }
+    const apiUrl = `https://api.ibeng.my.id/api/ai/img2prompt?url=${encodeURIComponent(uploadedImageUrl)}&apikey=MELvQtx7BG`;
+    return fetch(apiUrl)
+        .then(res => {
+            if (!res.ok) {
+                return res.json().then(err => { throw new Error('Gagal mendapatkan prompt: ' + (err.message || res.status)); });
+            }
+            return res.json();
+        })
+        .then(data => {
+            if (data && data.status === 'Success' && data.data && data.data.prompt) {
+                document.getElementById('promptInput').value = data.data.prompt;
+            }
+        });
+}
+
+function generateMedia() {
+    const prompt = document.getElementById('promptInput').value.trim();
+    const resultDiv = document.getElementById('result');
+    const module = getSelectedModule();
+    const spinner = document.getElementById('loadingSpinner');
+
+    spinner.style.display = 'block';
+    resultDiv.innerHTML = ''; // Kosongkan result sebelum memulai
+
+    if (module === 'cai') {
+        spinner.style.display = 'none'; // cai tidak butuh spinner lama
+        fetchCaiResponse();
+        return;
+    }
+    if (module === 'changeclothes') {
+        if (!uploadedImageUrl) {
+            alert('Silakan upload gambar terlebih dahulu.');
+            spinner.style.display = 'none';
+            return;
+        }
+        fetchChangeClothes(uploadedImageUrl, prompt || 'Change clothes');
+        return;
+    }
+    if (module === 'img2prompt') {
+        if (!uploadedImageUrl) {
+            alert('Silakan upload gambar terlebih dahulu.');
+            spinner.style.display = 'none';
+            return;
+        }
+        fetchPromptFromImage()
+            .then(() => {
+                spinner.style.display = 'none';
+            })
+            .catch(() => { spinner.style.display = 'none'; });
+        return;
+    }
+    if (module === 'txt2img') {
+        const txtPrompt = prompt;
+        if (!txtPrompt) {
+            alert('Silakan masukkan prompt untuk txt2img.');
+            spinner.style.display = 'none';
+            return;
+        }
+        fetchTxt2Img(txtPrompt);
+        return;
+    }
+
+    const isAutoPrompt = document.getElementById('autoPromptMode').checked;
+    if (isAutoPrompt && uploadedImageUrl && !prompt) {
+        fetchPromptFromImage()
+            .then(() => {
+                callApiGenerate(document.getElementById('promptInput').value);
+            })
+            .catch(() => { spinner.style.display = 'none'; });
+        return;
+    }
+    if (!prompt) {
+        alert('Silakan masukkan prompt.');
+        spinner.style.display = 'none';
+        return;
+    }
+    callApiGenerate(prompt);
+}
+
+// ===== FUNGSI YANG DIPERBARUI =====
+function callApiGenerate(finalPrompt) {
+    const resultDiv = document.getElementById('result');
+    const spinner = document.getElementById('loadingSpinner');
+    const module = getSelectedModule();
+    resultDiv.innerHTML = '<p style="color:#555;">Memproses, harap tunggu...</p>';
+
+    let apiUrl;
+
+    // Tentukan URL API yang benar berdasarkan modul yang dipilih
+    if (module === 'veo3-fast') {
+        if (!uploadedImageUrl) {
+            alert('Silakan upload gambar untuk modul Veo3-fast.');
+            spinner.style.display = 'none';
+            return;
+        }
+        apiUrl = `https://benk-7o83.onrender.com/api/ai/piiu3?prompt=${encodeURIComponent(finalPrompt)}&imageUrl=${encodeURIComponent(uploadedImageUrl)}&apikey=MrsNK32zbG`;
+    } else if (module === 'veo3') {
+        // API untuk Veo3 (tanpa gambar)
+        apiUrl = `https://api.ibeng.my.id/api/ai/piiu3v2?prompt=${encodeURIComponent(finalPrompt)}&apikey=MrsNK32zbG`;
+    } else {
+        spinner.style.display = 'none';
+        resultDiv.innerHTML = `<p style="color:orange;">Modul '${module}' tidak valid.</p>`;
+        return;
+    }
+
+    // Ambil data dari URL yang telah ditentukan
+    fetch(apiUrl)
+        .then(res => {
+            if (!res.ok) {
+                return res.json().then(err => { 
+                    throw new Error('Gagal dari API: ' + (err.message || res.statusText)); 
+                }).catch(() => {
+                    throw new Error('Gagal dari API: ' + res.statusText);
+                });
+            }
+            return res.json();
+        })
+        .then(data => {
+            spinner.style.display = 'none';
+            resultDiv.innerHTML = ''; 
+            
+            let videoUrl = null;
+
+            // Proses respons JSON berdasarkan modul
+            // KEDUA MODUL (veo3 dan veo3-fast) SEKARANG MENGGUNAKAN STRUKTUR YANG SAMA
+            if (module === 'veo3-fast' || module === 'veo3') {
+                // Struktur respons yang diharapkan: { "video_url": "..." }
+                if (data && data.video_url) {
+                    videoUrl = data.video_url;
+                }
+            }
+
+            // Tampilkan hasil video atau pesan error
+            if (videoUrl) {
+                const video = document.createElement('video');
+                video.src = videoUrl;
+                video.controls = true;
+                video.style.width = '100%';
+                resultDiv.appendChild(video);
+            } else {
+                resultDiv.innerHTML = `<p style="color:#999;">Gagal memuat video. ${data.message || 'Format respons tidak sesuai.'}</p>`;
+                console.error("Struktur respons tidak diharapkan untuk modul '" + module + "':", data);
+            }
+        })
+        .catch(err => {
+            spinner.style.display = 'none';
+            resultDiv.innerHTML = '<p style="color:red;">Error: ' + err.message + '</p>';
+            console.error(err);
+        });
+}
+// ===== AKHIR DARI FUNGSI YANG DIPERBAIKI =====
+
+
+function fetchChangeClothes(imageUrl, prompt) {
+    const resultDiv = document.getElementById('result');
+    const spinner = document.getElementById('loadingSpinner');
+    resultDiv.innerHTML = '<p style="color:#555;">Sedang mengubah pakaian...</p>';
+
+    const apiUrl = `https://api.ibeng.my.id/api/ai/changeclothes?url=${encodeURIComponent(imageUrl)}&prompt=${encodeURIComponent(prompt)}&apikey=MELvQtx7BG`;
+    fetch(apiUrl)
+        .then(res => {
+            if (!res.ok) {
+                return res.json().then(err => { throw new Error('Gagal dari API: ' + (err.message || res.status)); });
+            }
+            return res.json();
+        })
+        .then(data => {
+            spinner.style.display = 'none';
+            if (data && data.status === 'Success' && data.data) {
+                resultDiv.innerHTML = '';
+                const img = document.createElement('img');
+                img.src = data.data;
+                img.alt = 'Change Clothes Result';
+                resultDiv.appendChild(img);
+            } else {
+                throw new Error('Gagal mengubah pakaian.');
+            }
+        })
+        .catch(err => {
+            spinner.style.display = 'none';
+            resultDiv.innerHTML = '<p style="color:red;">' + err.message + '</p>';
+        });
+}
+
+function fetchCaiResponse() {
+    const message = document.getElementById('promptInput').value.trim();
+    if (!message) {
+        alert('Silakan masukkan pesan untuk CAI.');
+        return;
+    }
+    const apiUrl = `https://api.ibeng.my.id/api/ai/cai?message=${encodeURIComponent(message)}&chat_id=chatbot&custom=saya adalah chat gpt di kembangkan achmad rizky&apikey=MELvQtx7BG`;
+    fetch(apiUrl)
+        .then(res => {
+            if (!res.ok) {
+                return res.json().then(err => { throw new Error('Gagal dari API CAI: ' + (err.message || res.status)); });
+            }
+            return res.json();
+        })
+        .then(data => {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '';
+            if (data && data.status === 'Success' && data.result && data.result.text) {
+                resultDiv.innerHTML = '<p>' + data.result.text + '</p>';
+            } else {
+                resultDiv.innerHTML = '<p style="color:#999;">Tidak ada respons dari CAI.</p>';
+            }
+        })
+        .catch(err => {
+            document.getElementById('result').innerHTML = '<p style="color:red;">' + err.message + '</p>';
+        });
+}
+
+function fetchTxt2Img(prompt) {
+    const resultDiv = document.getElementById('result');
+    const spinner = document.getElementById('loadingSpinner');
+    resultDiv.innerHTML = '<p style="color:#555;">Memproses txt2img, harap tunggu...</p>';
+
+    const apiUrl = `https://api.ibeng.my.id/api/ai/txt2img?prompt=${encodeURIComponent(prompt)}&resolusi=tall&apikey=MELvQtx7BG`;
+
+    fetch(apiUrl)
+        .then(res => {
+            const contentType = res.headers.get('Content-Type');
+            if (res.ok && contentType && contentType.startsWith('image/')) {
+                return res.blob();
+            } else {
+                return res.json().then(err => { throw new Error('Gagal txt2img: ' + (err.message || res.status)); });
+            }
+        })
+        .then(blob => {
+            spinner.style.display = 'none';
+            const imgUrl = URL.createObjectURL(blob);
+            resultDiv.innerHTML = '';
+            const img = document.createElement('img');
+            img.src = imgUrl;
+            img.alt = 'Hasil txt2img';
+            resultDiv.appendChild(img);
+        })
+        .catch(err => {
+            spinner.style.display = 'none';
+            resultDiv.innerHTML = '<p style="color:red;">' + err.message + '</p>';
+        });
+}
+</script>
+
+<footer style="text-align:center; margin-top:40px; font-size:14px; color:#555;">
+    © 2025 Achmad Rizky.
+</footer>
+</body>
+</html>
